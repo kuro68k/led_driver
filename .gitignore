@@ -5,6 +5,7 @@
 *.bak
 *-bak
 .old
+hardware/plot/*
 
 # User-specific files
 *.suo

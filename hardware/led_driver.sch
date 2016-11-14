@@ -37,10 +37,10 @@ EELAYER END
 $Descr A3 16535 11693
 encoding utf-8
 Sheet 1 1
-Title ""
-Date ""
-Rev ""
-Comp ""
+Title "LED Driver Board with FM radio"
+Date "2016-11-12"
+Rev "1.0"
+Comp "Keio"
 Comment1 ""
 Comment2 ""
 Comment3 ""
