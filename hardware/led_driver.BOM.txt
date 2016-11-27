@@ -1,0 +1,44 @@
+Title	LED Driver Board with FM radio
+Date	27/11/2016 16:58:48
+Source	led_driver.sch
+Revsision	1.0
+Company	Keio
+
+Capacitors	7	X7R/X5R, 16V unless otherwise stated
+	C1	10u		0805	
+	C2	10n		0603	
+	C3	22u		0603	
+	C5, C6 	22n		0603	
+	C7	2u2		0603	
+	C8, C9, C12, C13, C14 	100n		0603	
+	C10, C11 	10u		1206	
+
+Diodes	1
+	D1	Schottky	PMEG3015EJ	SOD-323	
+
+Connectors	5
+	J2	CONN_01X05		B5B-ZR-SM4-TF	
+	J3	CONN_01X08		B8B-ZR-SM4-TF	
+	J4, J5, J6, J7 	CONN_01X08		B8B-ZR-SM4-TF	
+	J8	AVR-PDI-6A		3x2_1.27mm_SMD_header	
+	J9	USB_A		Molex 47346-0001	
+
+Inductors	2
+	L1	10uH	LQH5BPN100MT0L	Neosid_Inductor_SM-NE56_SMD2220	
+	L2	100nH		0603	
+
+Resistors	4	1% unless otherwise stated
+	R1	0R		0603	
+	R2	59k		0603	
+	R3, R6, R7 	15k		0603	
+	R4, R5 	2k2		0603	
+
+Integrated Circuits	7
+	U1	AP3211		SOT-23	
+	U2	RDA5807M		MSOP-10_3x3mm_Pitch0.5mm	
+	U3	TPS782XX		SOT-23	
+	U4	ATXMEGA32E5-A		TQFP-32	
+	U5, U6 	AS1116-BSST		SSOP-24	
+	U7	KT3225T		KT3225T	
+	U8	ASEK-32.768kHz		Crystal-3.2x2.5-ASEK-Series-Abracon	
+
