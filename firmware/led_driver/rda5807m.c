@@ -24,33 +24,46 @@ bool		RDA_time_good = false;
 /**************************************************************************************************
 * Write single register
 */
-inline void rda_write_reg(uint8_t reg)
+void rda_write_reg(uint8_t reg)
 {
-	TWI_write_reg(RDA_ADDRESS_IDX, reg, &registers[reg], 2);
+	TWI_write_reg(RDA_ADDRESS_IDX, reg, (uint8_t *)&registers[reg], 2);
 }
 
 /**************************************************************************************************
 * Write all registers
 */
-inline void rda_write_all(void)
+void rda_write_all(void)
 {
-	TWI_write_reg(RDA_ADDRESS_SEQ, RDA_REG_CTRLA, &registers[RDA_REG_CTRLA], 6*2);
+	TWI_write_reg(RDA_ADDRESS_SEQ, RDA_REG_CTRLA, (uint8_t *)&registers[0x02], 6*2);
 }
 
 /**************************************************************************************************
 * Read single register
 */
-inline void rda_read_reg(uint8_t reg)
+bool rda_read_reg(uint8_t reg)
 {
-	TWI_read_reg(RDA_ADDRESS_IDX, reg, &registers[reg], 2);
+	bool res = TWI_read_reg(RDA_ADDRESS_IDX, reg, (uint8_t *)&registers[reg], 2);
+	if (res)
+		registers[reg] = (registers[reg] >> 8) | (registers[reg] << 8);
+	return res;
 }
 
 /**************************************************************************************************
-* Read sequence of registers
+* Read all registers
 */
-inline void rda_read_seq(uint8_t start_reg, uint8_t end_reg)
+bool rda_read_all(void)//uint8_t start_reg, uint8_t end_reg)
 {
-	TWI_read_reg(RDA_ADDRESS_SEQ, start_reg, &registers[start_reg], (start_reg - end_reg) * 2);
+	bool res = TWI_read(RDA_ADDRESS_SEQ, (uint8_t *)&registers[0x0A], 6*2);
+	if (res)
+	{
+		registers[0x0A] = (registers[0x0A] >> 8) | (registers[0x0A] << 8);
+		registers[0x0B] = (registers[0x0B] >> 8) | (registers[0x0B] << 8);
+		registers[0x0C] = (registers[0x0C] >> 8) | (registers[0x0C] << 8);
+		registers[0x0D] = (registers[0x0D] >> 8) | (registers[0x0D] << 8);
+		registers[0x0E] = (registers[0x0E] >> 8) | (registers[0x0E] << 8);
+		registers[0x0F] = (registers[0x0F] >> 8) | (registers[0x0F] << 8);
+	}
+	return res;
 }
 
 /**************************************************************************************************
@@ -75,6 +88,26 @@ void rda_sleep(void)
 #pragma endregion
 
 /**************************************************************************************************
+* Test code
+*/
+void RDA_test(void)
+{
+	TWI_init();
+	
+	rda_read_all();
+	
+	for(uint8_t i = 0; i < 16; i++)
+		printf_P(PSTR("%04X\r\n"), registers[i]);
+
+	bool res = rda_read_reg(RDA_REG_CHIPID);
+	printf_P(PSTR("ID: %04X\r\n"), registers[0]);
+	if (res) puts_P(PSTR("OK"));
+	else puts_P(PSTR("FAIL"));
+		
+	for(;;);
+}
+
+/**************************************************************************************************
 * Set up the radio after reset
 */
 void RDA_init(void)
@@ -83,7 +116,7 @@ void RDA_init(void)
 	
 	// check chip ID
 	uint16_t chipid;
-	if (!TWI_read_reg(RDA_ADDRESS_IDX, RDA_REG_CHIPID, &chipid, sizeof(chipid)) ||
+	if (!TWI_read_reg(RDA_ADDRESS_IDX, RDA_REG_CHIPID, (uint8_t *)&chipid, sizeof(chipid)) ||
 		(chipid != 0x58))
 	{
 		printf("RDA chipid error (0x%04X)\r\n", chipid);
@@ -206,7 +239,7 @@ void rda_wait_for_time(void)
 				max_timeout = 65;	// time broadcast once a minute
 			}
 
-			rda_read_seq(RDA_REG_BLOCKB, RDA_REG_BLOCKD);
+			rda_read_all();
 			uint8_t type = 0x0A | (registers[RDA_REG_BLOCKB] >> 8) | (registers[RDA_REG_BLOCKB] >> 11);
 			if (type == 0x4A)	// time+date
 			{

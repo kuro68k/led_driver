@@ -56,11 +56,14 @@ int main(void)
 	// port R,  clocks
 	PORTR.OUT = 0;
 	PORTR.DIR = PIN0_bm;	// 32.768kHz output
-	PORTCFG.CLKOUT = PORTCFG_RTCCLKOUT_PR0_gc;
-	
+	PORTCFG.CLKOUT = PORTCFG_RTCOUT_PR0_gc;
+
 	STDIO_init();
-	AS_init();
-	RTC_init();
+	puts_P(PSTR("RDA test"));
+	RDA_test();
+
+	//AS_init();
+	//RTC_init();
 
 	PMIC.CTRL = PMIC_RREN_bm | PMIC_LOLVLEN_bm | PMIC_MEDLVLEN_bm | PMIC_HILVLEN_bm;
 	sei();

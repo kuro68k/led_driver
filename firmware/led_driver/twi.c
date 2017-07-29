@@ -14,6 +14,8 @@
 
 #include "twi.h"
 
+#include "stdio_fast.h"
+
 
 enum TRANSACTION_TYPES_enum
 {
@@ -50,7 +52,7 @@ volatile uint8_t data_bytes_AT = 0;
 volatile uint8_t	*data_buffer_AT = NULL;
 
 
-#pragma region Polled mode
+
 #ifndef TWI_INTERRUPT_DRIVEN
 
 
@@ -72,7 +74,7 @@ void TWI_init(void)
 /**************************************************************************************************
  * Write a register
  */
-bool TWI_write_reg(uint8_t address, uint8_t reg, const void *buffer, uint8_t buffer_size)
+bool TWI_write_reg(uint8_t address, uint8_t reg, const uint8_t *buffer, uint8_t buffer_size)
 {
 	__label__ failure;
 	bool success = false;
@@ -96,45 +98,43 @@ bool TWI_write_reg(uint8_t address, uint8_t reg, const void *buffer, uint8_t buf
 
 	// register address
 	TWI.MASTER.DATA = reg;
-	while ((TWI.MASTER.STATUS & TWI_MASTER_WIF_bm) == 0);
-	if (TWI.MASTER.STATUS & (TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm))
-		goto failure;
 
 	// data bytes
 	for (i = 0; i < buffer_size; i++)
 	{
-		TWI.MASTER.DATA = buffer[i];
 		while ((TWI.MASTER.STATUS & TWI_MASTER_WIF_bm) == 0);
+
 		if (TWI.MASTER.STATUS & (TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm))
 			goto failure;
+
+		TWI.MASTER.DATA = buffer[i];
 	}
+	while ((TWI.MASTER.STATUS & TWI_MASTER_WIF_bm) == 0);
 
 	// transaction complete or failed
 	success = true;
 failure:
 	TWI.MASTER.CTRLC = TWI_MASTER_CMD_STOP_gc;
-	
-	return(success);
+
+	return success;
 }
 
 /**************************************************************************************************
  * Read a register from TWI device
  */
-bool TWI_read_reg(uint8_t address, uint8_t reg, void *buffer, uint8_t buffer_size)
+bool TWI_read_reg(uint8_t address, uint8_t reg, uint8_t *buffer, uint8_t buffer_size)
 {
 	__label__ failure;
-	bool success = false;
-	uint8_t	i;
-	uint8_t *ptr = (uint8_t *)buffer;
-				
+	uint8_t	timeout;
+
 	// wait for bus to become idle
-	i = 0;
+	timeout = 0;
 	while ((TWI.MASTER.STATUS & TWI_MASTER_BUSSTATE_gm) != TWI_MASTER_BUSSTATE_IDLE_gc)
 	{
-		if (i > TWI_IDLE_TIMEOUT_MS)
+		if (timeout > TWI_IDLE_TIMEOUT_MS)
 			goto failure;
 		_delay_ms(1);
-		i++;
+		timeout++;
 	}
 
 	// start write
@@ -151,108 +151,94 @@ bool TWI_read_reg(uint8_t address, uint8_t reg, void *buffer, uint8_t buffer_siz
 
 	// (re)start read
 	TWI.MASTER.ADDR = (address << 1) | TWI_READ_bm;		// sends repeated start and address
-	while ((TWI.MASTER.STATUS & (TWI_MASTER_WIF_bm | TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm)) == 0);
-	if (TWI.MASTER.STATUS & (TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm))
-		goto failure;
-		
+
 	// read requested number of bytes
-	i = buffer_size;
-	while (i)
+	timeout = 200;	// double timeout to account for read setup byte
+	while (buffer_size)
 	{
-		while ((TWI.MASTER.STATUS & (TWI_MASTER_RIF_bm | TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm)) == 0);
+		while ((TWI.MASTER.STATUS & (TWI_MASTER_RIF_bm | TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm)) == 0)
+		{
+			timeout--;
+			if (timeout == 0)
+				goto failure;
+			_delay_us(1);
+		}
+		timeout = 100;
+
+		*buffer++ = TWI.MASTER.DATA;
+
 		if (TWI.MASTER.STATUS & (TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm))
 			goto failure;
-		i--;
-		if (i != 0)
+		buffer_size--;
+		if (buffer_size != 0)
 			TWI.MASTER.CTRLC = TWI_MASTER_CMD_RECVTRANS_gc;							// send ACK
 		else
 			TWI.MASTER.CTRLC = TWI_MASTER_ACKACT_bm | TWI_MASTER_CMD_STOP_gc;		// send NACK
-		*ptr++ = TWI.MASTER.DATA;
 	}
-		
+
 	// transaction complete or failed
-	success = true;
+	return true;
 failure:
 	TWI.MASTER.CTRLC = TWI_MASTER_CMD_STOP_gc;
-	
-	return(success);
+	return false;
 }
 
 /**************************************************************************************************
  * Read from TWI device
  */
-bool TWI_read(uint8_t address, void *buffer, uint8_t buffer_size)
+bool TWI_read(uint8_t address, uint8_t *buffer, uint8_t buffer_size)
 {
 	__label__ failure;
-	//bool success = false;
-	uint8_t	i;
-	uint8_t *ptr = (uint8_t *)buffer;
+	uint8_t	timeout;
 
 	// wait for bus to become idle
-	i = 0;
-	//TWI.MASTER.STATUS = TWI_MASTER_BUSSTATE_IDLE_gc;
+	timeout = 0;
 	while ((TWI.MASTER.STATUS & TWI_MASTER_BUSSTATE_gm) != TWI_MASTER_BUSSTATE_IDLE_gc)
 	{
-		if (i > 10)
+		if (timeout > 10)
 			goto failure;
 		_delay_ms(1);
-		i++;
+		timeout++;
 	}
 
 	// start read
 	TWI.MASTER.ADDR = (address << 1) | TWI_READ_bm;		// sends start and address
-	uint8_t	timeout = 0;
-	while ((TWI.MASTER.STATUS & (TWI_MASTER_RIF_bm | TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm)) == 0)
-	{
-		timeout++;
-		if (timeout > 200)
-			goto failure;
-		_delay_us(1);
-	}
-	if (TWI.MASTER.STATUS & (TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm))
-		goto failure;
-	if (TWI.MASTER.STATUS & TWI_MASTER_RXACK_bm)
-		goto failure;
 
-	//success = true;
 	// read requested number of bytes
-	i = buffer_size;
-	while (i)
+	timeout = 200;	// double timeout to account for read setup byte
+	while (buffer_size)
 	{
-		timeout = 0;
 		while ((TWI.MASTER.STATUS & (TWI_MASTER_RIF_bm | TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm)) == 0)
 		{
-			timeout++;
-			if (timeout > 200)
+			timeout--;
+			if (timeout == 0)
 				goto failure;
 			_delay_us(1);
 		}
-		
+		timeout = 100;
+
+		*buffer++ = TWI.MASTER.DATA;
+
 		if (TWI.MASTER.STATUS & (TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm))
 			goto failure;
-		i--;
-		if (i != 0)
+		buffer_size--;
+		if (buffer_size != 0)
 			TWI.MASTER.CTRLC = TWI_MASTER_CMD_RECVTRANS_gc;							// send ACK
 		else
 			TWI.MASTER.CTRLC = TWI_MASTER_ACKACT_bm | TWI_MASTER_CMD_STOP_gc;		// send NACK
-		*ptr++ = TWI.MASTER.DATA;
 	}
 
 	// transaction complete or failed
-	return(true);
-	//success = true;
+	return true;
 failure:
 	TWI.MASTER.CTRLC = TWI_MASTER_ACKACT_bm | TWI_MASTER_CMD_STOP_gc;
 
-	return(false);
-	//return(success);
+	return false;
 }
 
 
 #endif
-#pragma endregion
 
-#pragma region Interrupt mode
 #ifdef TWI_INTERRUPT_DRIVEN
 
 
@@ -307,6 +293,7 @@ ISR(TWI_MASTER_vect)
 				default:
 					goto reset;
 			}
+			break;
 		
 		// read register
 		case TWI_TRANSACTION_READ_REG:
@@ -330,6 +317,7 @@ ISR(TWI_MASTER_vect)
 				default:
 					goto reset;
 			}
+			break;
 
 		// read
 		case TWI_TRANSACTION_READ:
@@ -366,7 +354,7 @@ reset:
 /**************************************************************************************************
 * Write a register
 */
-bool TWI_write_reg(uint8_t address, uint8_t reg, const void *buffer, uint8_t buffer_size)
+bool TWI_write_reg(uint8_t address, uint8_t reg, const uint8_t *buffer, uint8_t buffer_size)
 {
 	uint8_t	i;
 
@@ -399,7 +387,7 @@ bool TWI_write_reg(uint8_t address, uint8_t reg, const void *buffer, uint8_t buf
 /**************************************************************************************************
 * Read a register from TWI device
 */
-bool TWI_read_reg(uint8_t address, uint8_t reg, void *buffer, uint8_t buffer_size)
+bool TWI_read_reg(uint8_t address, uint8_t reg, uint8_t *buffer, uint8_t buffer_size)
 {
 	uint8_t	i;
 				
@@ -431,7 +419,7 @@ bool TWI_read_reg(uint8_t address, uint8_t reg, void *buffer, uint8_t buffer_siz
 /**************************************************************************************************
 * Read from TWI device
 */
-bool TWI_read(uint8_t address, void *buffer, uint8_t buffer_size)
+bool TWI_read(uint8_t address, uint8_t *buffer, uint8_t buffer_size)
 {
 	uint8_t	i;
 
@@ -460,6 +448,10 @@ bool TWI_read(uint8_t address, void *buffer, uint8_t buffer_size)
 	return(true);
 }
 
+
+#endif
+
+
 /**************************************************************************************************
  * Scan for TWI devices, output to terminal
  */
@@ -475,6 +467,3 @@ void TWI_scan(void)
 	
 	puts_P(PSTR("Scan complete.\r\n"));
 }
-
-#endif
-#pragma endregion

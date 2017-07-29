@@ -109,6 +109,8 @@
 
 
 
+extern void RDA_test(void);
+extern void RDA_init(void);
 extern void RDA_get_time(void);
 
 
