@@ -6,6 +6,7 @@
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 #include <util/delay.h>
+#include <string.h>
 #include "global.h"
 #include "stdio_fast.h"
 #include "twi.h"
@@ -114,21 +115,23 @@ void rda_sleep(void)
 */
 void RDA_init(void)
 {
-	TWI_init();
-	
-	// check chip ID
-	if (!rda_read_reg(RDA_REG_CHIPID) ||
-		((registers[RDA_REG_CHIPID] & 0xFF00) != 0x5800))
+	for (int retries = 0; retries < 5; retries++)
 	{
-		printf("RDA chipid error (0x%04X)\r\n", registers[RDA_REG_CHIPID]);
-		return;
+		TWI_init();
+
+		// soft reset
+		registers[RDA_REG_CTRLA] = RDA_SOFT_RESET_bm;
+		rda_write_reg(RDA_REG_CTRLA);
+		_delay_ms(1);
+	
+		// check chip ID
+		if (!rda_read_reg(RDA_REG_CHIPID) ||
+			((registers[RDA_REG_CHIPID] & 0xFF00) != 0x5800))
+			printf("RDA chipid error (0x%04X)\r\n", registers[RDA_REG_CHIPID]);
+		else
+			break;
 	}
-	
-	// soft reset
-	registers[RDA_REG_CTRLA] = RDA_SOFT_RESET_bm;
-	rda_write_reg(RDA_REG_CTRLA);
-	_delay_ms(1);
-	
+
 	// initial configuration
 	registers[RDA_REG_CTRLA] =	RDA_DHIZ_bm |
 								//RDA_DMUTE_bm |
@@ -383,6 +386,7 @@ void RDA_test(void)
 
 	uint16_t last_blockb = 0;
 	char name[9] = "........\0";
+	//char radiotext[65] = "................................................................\0";
 	for(;;)
 	{
 		//_delay_ms(10);
@@ -397,14 +401,57 @@ void RDA_test(void)
 			if (registers[RDA_REG_BLOCKB] & RDA_ABCD_E_bm)
 				continue;
 
-			if ((registers[0x0D] & 0xF000) == 0x0000)	// station name
+			uint8_t group_type = 0x0A |
+								((registers[RDA_REG_BLOCKB] & 0xF000) >> 8) |
+								((registers[RDA_REG_BLOCKB] &0x0800) >> 8);		// A/B bit
+			switch (group_type)
 			{
-				uint8_t cx = registers[RDA_REG_BLOCKB] & 0b11;
-				cx *= 2;
-				name[cx] = (registers[RDA_REG_BLOCKD] >> 8) & 0x7F;
-				name[cx+1] = registers[RDA_REG_BLOCKD] & 0x7F;
-				if (name[cx] < 33) name[cx] = '.';
-				if (name[cx+1] < 33) name[cx+1] = '.';
+				case 0x0A:	// station name, PI code etc
+				case 0x0B:
+				{
+					uint8_t cx = registers[RDA_REG_BLOCKB] & 0b11;
+					cx *= 2;
+					uint8_t c1, c2;
+					c1 = (registers[RDA_REG_BLOCKD] >> 8) & 0x7F;
+					c2 = registers[RDA_REG_BLOCKD] & 0x7F;
+					if ((c1 < 32) || (c1 > 126) || (c2 < 32) || (c2 > 126))
+						continue;
+					if (c1 == 32) c1 = '.';
+					if (c2 == 32) c2 = '.';
+					name[cx] = c1;
+					name[cx+1] = c2;
+				}
+				break;
+/*
+				case 0x2A:	// radiotext
+				{
+					uint8_t cx = registers[RDA_REG_BLOCKB] & 0b11111;
+					cx *= 2;
+					uint8_t c1, c2;
+					c1 = (registers[RDA_REG_BLOCKD] >> 8) & 0x7F;
+					c2 = registers[RDA_REG_BLOCKD] & 0x7F;
+					if ((c1 < 32) || (c1 > 126) || (c2 < 32) || (c2 > 126))
+						continue;
+					if (c1 == 32) c1 = '.';
+					if (c2 == 32) c2 = '.';
+					radiotext[cx] = c1;
+					radiotext[cx+1] = c2;
+				}
+*/
+				case 0x4A:	// time
+				{
+					uint32_t d = (((uint32_t)(registers[RDA_REG_BLOCKB]) & 0b11) << 15) | (registers[RDA_REG_BLOCKC] >> 1);
+					uint8_t h = ((registers[RDA_REG_BLOCKC] & 1) << 4) | (registers[RDA_REG_BLOCKD] >> 12);
+					uint8_t m = (registers[RDA_REG_BLOCKD] >> 6) & 0x3F;
+					
+					if (d < 57978) break;
+					if (h > 23) break;
+					if (m > 59) break;
+					if (memcmp_P(name, PSTR("Classic."), 8) != 0) break;
+					
+					printf_P(PSTR("MDJ=%lu, h=%u, m=%u\r\n"), d, h, m);
+				}
+				break;
 			}
 
 			//if (registers[RDA_REG_BLOCKB] & RDA_ABCD_E_bm)
@@ -413,14 +460,6 @@ void RDA_test(void)
 			//else
 				printf_P(PSTR("ABCD %04X %04X %04X %04X %s\r\n"),
 						 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
-
-			if ((registers[0x0D] & 0xF000) == 0x4000)	// time
-			{
-				uint32_t d = (((uint32_t)(registers[RDA_REG_BLOCKB]) & 0b11) << 15) | (registers[RDA_REG_BLOCKC] >> 1);
-				uint8_t h = ((registers[RDA_REG_BLOCKC] & 1) << 4) | (registers[RDA_REG_BLOCKD] >> 12);
-				uint8_t m = (registers[RDA_REG_BLOCKD] >> 6) & 0x3F;
-				printf_P(PSTR("MDJ=%lu, h=%u, m=%u\r\n"), d, h, m);
-			}
 
 			//printf_P(PSTR("%04X %u\r\n"), registers[0x0B], registers[0x0B] >> 9);
 			//_delay_ms(100);
