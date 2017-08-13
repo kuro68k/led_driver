@@ -100,14 +100,15 @@ bool TWI_write_reg(uint8_t address, uint8_t reg, const uint8_t *buffer, uint8_t 
 	TWI.MASTER.DATA = reg;
 
 	// data bytes
-	for (i = 0; i < buffer_size; i++)
+	while (buffer_size)
 	{
 		while ((TWI.MASTER.STATUS & TWI_MASTER_WIF_bm) == 0);
 
 		if (TWI.MASTER.STATUS & (TWI_MASTER_ARBLOST_bm | TWI_MASTER_BUSERR_bm))
 			goto failure;
 
-		TWI.MASTER.DATA = buffer[i];
+		TWI.MASTER.DATA = *buffer++;
+		buffer_size--;
 	}
 	while ((TWI.MASTER.STATUS & TWI_MASTER_WIF_bm) == 0);
 

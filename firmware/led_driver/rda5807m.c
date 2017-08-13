@@ -26,7 +26,8 @@ bool		RDA_time_good = false;
 */
 void rda_write_reg(uint8_t reg)
 {
-	TWI_write_reg(RDA_ADDRESS_IDX, reg, (uint8_t *)&registers[reg], 2);
+	uint16_t big_endian = (registers[reg] >> 8) | (registers[reg] << 8);
+	TWI_write_reg(RDA_ADDRESS_IDX, reg, (uint8_t *)&big_endian, 2);
 }
 
 /**************************************************************************************************
@@ -34,7 +35,14 @@ void rda_write_reg(uint8_t reg)
 */
 void rda_write_all(void)
 {
-	TWI_write_reg(RDA_ADDRESS_SEQ, RDA_REG_CTRLA, (uint8_t *)&registers[0x02], 6*2);
+	uint16_t big_endian[6];
+	big_endian[0] = (registers[2] >> 8) | (registers[2] << 8);
+	big_endian[1] = (registers[3] >> 8) | (registers[3] << 8);
+	big_endian[2] = (registers[4] >> 8) | (registers[4] << 8);
+	big_endian[3] = (registers[5] >> 8) | (registers[5] << 8);
+	big_endian[4] = (registers[6] >> 8) | (registers[6] << 8);
+	big_endian[5] = (registers[7] >> 8) | (registers[7] << 8);
+	TWI_write_reg(RDA_ADDRESS_SEQ, RDA_REG_CTRLA, (uint8_t *)&big_endian, 6*2);
 }
 
 /**************************************************************************************************
@@ -49,9 +57,23 @@ bool rda_read_reg(uint8_t reg)
 }
 
 /**************************************************************************************************
-* Read all registers
+* Read status A and B registers
 */
-bool rda_read_all(void)//uint8_t start_reg, uint8_t end_reg)
+bool rda_read_statusAB(void)
+{
+	bool res = TWI_read(RDA_ADDRESS_SEQ, (uint8_t *)&registers[0x0A], 2*2);
+	if (res)
+	{
+		registers[0x0A] = (registers[0x0A] >> 8) | (registers[0x0A] << 8);
+		registers[0x0B] = (registers[0x0B] >> 8) | (registers[0x0B] << 8);
+	}
+	return res;
+}
+
+/**************************************************************************************************
+* Read all data registers (0x0A-0x0F)
+*/
+bool rda_read_all(void)
 {
 	bool res = TWI_read(RDA_ADDRESS_SEQ, (uint8_t *)&registers[0x0A], 6*2);
 	if (res)
@@ -88,26 +110,6 @@ void rda_sleep(void)
 #pragma endregion
 
 /**************************************************************************************************
-* Test code
-*/
-void RDA_test(void)
-{
-	TWI_init();
-	
-	rda_read_all();
-	
-	for(uint8_t i = 0; i < 16; i++)
-		printf_P(PSTR("%04X\r\n"), registers[i]);
-
-	bool res = rda_read_reg(RDA_REG_CHIPID);
-	printf_P(PSTR("ID: %04X\r\n"), registers[0]);
-	if (res) puts_P(PSTR("OK"));
-	else puts_P(PSTR("FAIL"));
-		
-	for(;;);
-}
-
-/**************************************************************************************************
 * Set up the radio after reset
 */
 void RDA_init(void)
@@ -115,11 +117,10 @@ void RDA_init(void)
 	TWI_init();
 	
 	// check chip ID
-	uint16_t chipid;
-	if (!TWI_read_reg(RDA_ADDRESS_IDX, RDA_REG_CHIPID, (uint8_t *)&chipid, sizeof(chipid)) ||
-		(chipid != 0x58))
+	if (!rda_read_reg(RDA_REG_CHIPID) ||
+		((registers[RDA_REG_CHIPID] & 0xFF00) != 0x5800))
 	{
-		printf("RDA chipid error (0x%04X)\r\n", chipid);
+		printf("RDA chipid error (0x%04X)\r\n", registers[RDA_REG_CHIPID]);
 		return;
 	}
 	
@@ -129,25 +130,39 @@ void RDA_init(void)
 	_delay_ms(1);
 	
 	// initial configuration
+	registers[RDA_REG_CTRLA] =	RDA_DHIZ_bm |
+								//RDA_DMUTE_bm |
+								//RDA_MONO_bm |
+								RDA_RCLK_DIRECT_bm |
+								RDA_CLK_MODE_32KHZ_gc |
+								RDA_NEW_METHOD_bm |
+								RDA_RDS_EN_bm |
+								RDA_ENABLE_bm;
+	//registers[RDA_REG_CTRLA] = RDA_CLK_MODE_32KHZ_gc | RDA_RDS_EN_bm;
+	//registers[RDA_REG_TUNING] = RDA_BAND_76_108_WORLD_gc | RDA_SPACE_100KHZ_gc;
 /*
-	TWI_write_reg(RDA_ADDRESS, RDA_REG_CTRLA,
-				  RDA_DIRECT_MODE_bm | RDA_CLK_MODE_32KHZ_gc | RDA_RDS_EN_bm);
-	TWI_write_reg(RDA_ADDRESS, RDA_REG_TUNING,
-				  (preferred_frequencies_100khz[0] << RDA_CHAN_gp) |
-				  RDA_BAND_76_108_WORLD_gc | RDA_SPACE_100KHZ_gc);
-	TWI_write_reg(RDA_ADDRESS, RDA_REG_AUDIO, 0);
-	TWI_write_reg(RDA_ADDRESS, RDA_REG_CTRLB, 0b1000<<RDA_SEEKTH_gp);
-	TWI_write_reg(RDA_ADDRESS, RDA_REG_OPEN, 0);
-	TWI_write_reg(RDA_ADDRESS, RDA_REG_BAND, 0);
-*/
-
-	registers[RDA_REG_CTRLA] = RDA_DIRECT_MODE_bm | RDA_CLK_MODE_32KHZ_gc | RDA_RDS_EN_bm;
-	registers[RDA_REG_TUNING] = RDA_BAND_76_108_WORLD_gc | RDA_SPACE_100KHZ_gc;
-	registers[RDA_REG_AUDIO] = 0;
+	registers[RDA_REG_TUNING] = RDA_BAND_87_108_EU_US_gc | RDA_SPACE_100KHZ_gc;
+	registers[RDA_REG_AUDIO] = (1<<11) | (1<<9);
 	registers[RDA_REG_CTRLB] = 0b1000<<RDA_SEEKTH_gp;
+	registers[RDA_REG_CTRLB] = (0b0110<<RDA_SEEKTH_gp) | 0b1101;
 	registers[RDA_REG_OPEN] = 0;
 	registers[RDA_REG_BAND] = 0;
+*/
+	// programming guide
+	//registers[0x02] = 0xC001;
+	registers[0x03] = 0x1B90;
+	registers[0x04] = 0x0C00;	// bit 10 undocumented
+	registers[0x05] = RDA_INT_MODE_bm |	// seems to be essential
+					  RDA_LNA_PORT_LNAP_gc |
+					  RDA_LNA_ICSEL_2_7MA_gc |
+					  0xD;	// volume
+					  //0x86AD;
+	registers[0x06] = 0x8000;	// reserved bit set
+	//registers[0x07] = 0x5F1A;
+	//registers[0x08] = 0x5EC6;
+
 	rda_write_all();
+	_delay_ms(600);
 }
 
 /**************************************************************************************************
@@ -155,27 +170,37 @@ void RDA_init(void)
 */
 bool rda_tune(uint16_t freq)
 {
-	printf_P(PSTR("Tuning to %u... "), freq);
+	//printf_P(PSTR("Tuning to %u... "), freq);
 
 	// start seeking
 	registers[RDA_REG_TUNING] = (registers[RDA_REG_TUNING] & ~RDA_CHAN_gm) |
-								((freq - 760) << RDA_CHAN_gp) |
+								((freq - 870) << RDA_CHAN_gp) |
 								RDA_TUNE_bm;
+	registers[RDA_REG_TUNING] = ((freq - 870) << 6) | RDA_TUNE_bm;
 	rda_write_reg(RDA_REG_TUNING);
 	
 	// wait for completion
+	uint8_t timeout = 0;
 	do
 	{
 		_delay_ms(10);
 		rda_read_reg(RDA_REG_STATUSA);
+		timeout++;
+		if (timeout > 250)
+			break;
 	} while (!(registers[RDA_REG_STATUSA] & (RDA_STC_bm | RDA_SF_bm)));		// seek complete or failed
+
+	//rda_read_reg(RDA_REG_TUNING);
+	//puts("");
+	//printf_P(PSTR("TUNING:  %04X\r\n"), registers[RDA_REG_TUNING]);
+	//printf_P(PSTR("STATUSA: %04X\r\n"), registers[RDA_REG_STATUSA]);
 	
 	if (registers[RDA_REG_STATUSA] & RDA_SF_bm)
 	{
 		puts_P(PSTR("failed"));
 		return false;
 	}
-	puts_P(PSTR("OK"));
+	//puts_P(PSTR("OK"));
 	return true;
 }
 
@@ -197,9 +222,19 @@ bool rda_seek_up(bool restart)
 	rda_write_reg(RDA_REG_CTRLA);
 	
 	// wait for completion
+	uint8_t timeout = 0;
 	do
 	{
-		_delay_ms(10);
+		_delay_ms(50);	// 12.5 seconds timeout
+		//if (!rda_read_reg(RDA_REG_STATUSA))
+		//	putchar('X');
+		//rda_read_statusAB();
+		//printf_P(PSTR("%04X\r\n"), registers[RDA_REG_STATUSA]);
+		rda_read_reg(RDA_REG_TUNING);
+		printf_P(PSTR("%04X\r\n"), registers[RDA_REG_TUNING]);
+		timeout++;
+		if (timeout > 250)
+			break;
 		rda_read_reg(RDA_REG_STATUSA);
 	} while (!(registers[RDA_REG_STATUSA] & (RDA_STC_bm | RDA_SF_bm)));		// seek complete or failed
 	
@@ -209,6 +244,8 @@ bool rda_seek_up(bool restart)
 		return false;
 	}
 	
+	rda_read_statusAB();
+	printf("STATUSA: %04X\r\n", registers[RDA_REG_STATUSA]);
 	printf("Found station at %u\r\n", (registers[RDA_REG_STATUSA] & 0x1F) + 760);
 	return true;
 }
@@ -313,4 +350,102 @@ void RDA_get_time(void)
 		// try to get time from RDS
 		rda_wait_for_time();
 	}
+}
+
+/**************************************************************************************************
+* Test code
+*/
+void RDA_test(void)
+{
+	TWI_init();
+
+	RDA_init();
+	rda_wake();
+
+	//rda_seek_up(false);
+	rda_tune(1004);
+	
+	_delay_ms(1000);
+	rda_read_reg(RDA_REG_STATUSB);
+	printf_P(PSTR("STATUSB: %04X %u\r\n"), registers[RDA_REG_STATUSB], registers[RDA_REG_STATUSB] >> 9);
+/*
+	uint16_t temp = registers[RDA_REG_STATUSB];
+	for(;;)
+	{
+		rda_read_reg(RDA_REG_STATUSB);
+		if (temp != registers[RDA_REG_STATUSB])
+		{
+			temp = registers[RDA_REG_STATUSB];
+			printf_P(PSTR("%04X\r\n"), temp);
+		}
+	}
+*/
+
+	uint16_t last_blockb = 0;
+	char name[9] = "........\0";
+	for(;;)
+	{
+		//_delay_ms(10);
+		rda_read_all();
+		if ((registers[0x0A] & RDA_RDSR_bm) && (registers[RDA_REG_BLOCKB] != last_blockb))
+		{
+			last_blockb = registers[RDA_REG_BLOCKB];
+			if ((registers[0xA] & RDA_RDSS_bm) == 0)
+				continue;
+			if ((registers[0xB] & 0xF) != 0)
+				continue;
+			if (registers[RDA_REG_BLOCKB] & RDA_ABCD_E_bm)
+				continue;
+
+			if ((registers[0x0D] & 0xF000) == 0x0000)	// station name
+			{
+				uint8_t cx = registers[RDA_REG_BLOCKB] & 0b11;
+				cx *= 2;
+				name[cx] = (registers[RDA_REG_BLOCKD] >> 8) & 0x7F;
+				name[cx+1] = registers[RDA_REG_BLOCKD] & 0x7F;
+				if (name[cx] < 33) name[cx] = '.';
+				if (name[cx+1] < 33) name[cx+1] = '.';
+			}
+
+			//if (registers[RDA_REG_BLOCKB] & RDA_ABCD_E_bm)
+			//	printf_P(PSTR("E    %04X %04X %04X %04X %s\r\n"),
+			//			 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
+			//else
+				printf_P(PSTR("ABCD %04X %04X %04X %04X %s\r\n"),
+						 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
+
+			if ((registers[0x0D] & 0xF000) == 0x4000)	// time
+			{
+				uint32_t d = (((uint32_t)(registers[RDA_REG_BLOCKB]) & 0b11) << 15) | (registers[RDA_REG_BLOCKC] >> 1);
+				uint8_t h = ((registers[RDA_REG_BLOCKC] & 1) << 4) | (registers[RDA_REG_BLOCKD] >> 12);
+				uint8_t m = (registers[RDA_REG_BLOCKD] >> 6) & 0x3F;
+				printf_P(PSTR("MDJ=%lu, h=%u, m=%u\r\n"), d, h, m);
+			}
+
+			//printf_P(PSTR("%04X %u\r\n"), registers[0x0B], registers[0x0B] >> 9);
+			//_delay_ms(100);
+		}
+	}
+
+	for (uint16_t i = 870; i < 1070; i++)
+	{
+		rda_tune(i);
+		_delay_ms(100);
+		rda_read_reg(RDA_REG_STATUSB);
+		printf_P(PSTR("%u %04X %u\r\n"), i, registers[RDA_REG_STATUSB], registers[RDA_REG_STATUSB] >> 9);
+	}
+	
+	
+/*	
+	rda_read_all();
+	
+	for(uint8_t i = 0; i < 16; i++)
+		printf_P(PSTR("%04X\r\n"), registers[i]);
+
+	bool res = rda_read_reg(RDA_REG_CHIPID);
+	printf_P(PSTR("ID: %04X\r\n"), registers[0]);
+	if (res) puts_P(PSTR("OK"));
+	else puts_P(PSTR("FAIL"));
+*/	
+	for(;;);
 }

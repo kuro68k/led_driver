@@ -28,10 +28,10 @@
 #define RDA_REG_BLOCKD				0x0F
 
 
-// CHIPID
+// 0x0 CHIPID
 #define RDA_CHIPID_gc				0xFE00
 
-// CTRLA
+// 0x2 CTRLA
 #define RDA_DHIZ_bm					(1<<15)
 #define RDA_DMUTE_bm				(1<<14)
 #define RDA_MONO_bm					(1<<13)
@@ -50,9 +50,9 @@
 #define RDA_SOFT_RESET_bm			(1<<1)
 #define RDA_ENABLE_bm				(1<<0)
 
-// TUNING
+// 0x3 TUNING
 #define	RDA_CHAN_gp					6
-#define RDA_CHAN_gm					(0x1F>>RDA_CHAN_gp)
+#define RDA_CHAN_gm					0xFFC0	//(0x3F<<RDA_CHAN_gp)
 #define RDA_DIRECT_MODE_bm			(1<<5)
 #define RDA_TUNE_bm					(1<<4)
 #define RDA_BAND_gp					2
@@ -68,14 +68,29 @@
 #define RDA_SPACE_50KHZ_gc			(0b10<<RDA_SPACE_gp)
 #define RDA_SPACE_25KHZ_gc			(0b11<<RDA_SPACE_gp)
 
-// CTRLB
+// 0x5 CTRLB
 #define RDA_INT_MODE_bm				(1<<15)
 #define RDA_SEEKTH_gp				8
 #define RDA_SEEKTH_gm				(0b1111<<RDA_SEEKTH_gp)
+
+#define RDA_LNA_PORT_SEL_gp			6
+#define	RDA_LNA_PORT_SEL_gm			(0b11<<RDA_LNA_PORT_SEL_gp)
+#define	RDA_LNA_PORT_NO_INPUT_gc	(0b00<<RDA_LNA_PORT_SEL_gp)
+#define	RDA_LNA_PORT_LNAN_gc		(0b01<<RDA_LNA_PORT_SEL_gp)
+#define	RDA_LNA_PORT_LNAP_gc		(0b10<<RDA_LNA_PORT_SEL_gp)
+#define	RDA_LNA_PORT_DUAL_gc		(0b11<<RDA_LNA_PORT_SEL_gp)
+
+#define	RDA_LNA_ICSEL_gp			4
+#define RDA_LNA_ICSEL_gm			(0b11<<RDA_LNA_ICSEL_gp)
+#define	RDA_LNA_ICSEL_1_8MA_gc		(0b00<<RDA_LNA_ICSEL_gp)
+#define	RDA_LNA_ICSEL_2_1MA_gc		(0b01<<RDA_LNA_ICSEL_gp)
+#define	RDA_LNA_ICSEL_2_7MA_gc		(0b10<<RDA_LNA_ICSEL_gp)
+#define	RDA_LNA_ICSEL_3_0MA_gc		(0b11<<RDA_LNA_ICSEL_gp)
+
 #define RDA_VOLUME_gp				0
 #define RDA_VOLUME_gm				(0b1111<<RDA_VOLUME_gp)
 
-// OPEN
+// 0x6 OPEN
 #define RDA_OPEN_MODE_gp			13
 #define RDA_OPEN_MODE_gm			(0b11<<RDA_OPEN_MODE_gp)
 #define RDA_OPEN_MODE_OPEN_gc		(0b11<<RDA_OPEN_MODE_gp)

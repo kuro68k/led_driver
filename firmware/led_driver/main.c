@@ -48,6 +48,8 @@ int main(void)
 	// port C, radio and debug comms
 	PORTC.OUT = PIN0_bm | PIN1_bm | PIN3_bm;	// TWI, TX
 	PORTC.DIR = 0xFF;
+	PORTC.PIN0CTRL |= PORTCFG_SRLENRC_bm;
+	PORTC.PIN1CTRL |= PORTCFG_SRLENRC_bm;
 	
 	// port D, expansion and AS1116 drivers
 	PORTD.OUT = 0xFF;
@@ -57,6 +59,8 @@ int main(void)
 	PORTR.OUT = 0;
 	PORTR.DIR = PIN0_bm;	// 32.768kHz output
 	PORTCFG.CLKOUT = PORTCFG_RTCOUT_PR0_gc;
+
+	RTC_init();
 
 	STDIO_init();
 	puts_P(PSTR("RDA test"));

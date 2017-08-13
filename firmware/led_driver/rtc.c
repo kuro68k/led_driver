@@ -141,15 +141,18 @@ void RTC_init(void)
 	rtc_time_AT.second = 0;
 	
 	// start RTC
-	CLK.RTCCTRL = CLK_RTCSRC_EXTCLK_gc;		// 32.768kHz from TCXO
+	//CLK.RTCCTRL = CLK_RTCSRC_EXTCLK_gc | CLK_RTCEN_bm;	// 32.768kHz from TCXO
+	OSC.CTRL |= OSC_RC32KEN_bm;
+	while(!(OSC.STATUS & OSC_RC32KRDY_bm));
+	CLK.RTCCTRL = CLK_RTCSRC_RCOSC32_gc | CLK_RTCEN_bm;
 	
 	while ((!RTC.STATUS & RTC_SYNCBUSY_bm));
-	RTC.INTCTRL = RTC_OVFINTLVL_LO_gc | RTC_COMPINTLVL_LO_gc;
+	//RTC.INTCTRL = RTC_OVFINTLVL_LO_gc | RTC_COMPINTLVL_LO_gc;
 	RTC.CALIB = 0;
 	RTC.CNT = 0;
-	RTC.PER = 2047;
-	RTC.COMP = 1023;
-	RTC.CTRL = RTC_PRESCALER_DIV16_gc;
+	RTC.PER = 32768;
+	RTC.COMP = 16384;
+	RTC.CTRL = RTC_PRESCALER_DIV1_gc;
 }
 
 /**************************************************************************************************
