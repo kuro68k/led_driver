@@ -6,6 +6,19 @@ Stations:	886/887		Radio 2?
 			983/984
 			1004/1005
 			
+Scan:
+977 67		Heart		interference?
+976 67
+975 63
+978 61
+983 60		R4?
+1005 60		Classic
+984 60
+1004 59		Classic		good
+930 55
+909 54
+
+
 
 RDA
 

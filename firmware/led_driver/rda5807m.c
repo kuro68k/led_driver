@@ -356,6 +356,68 @@ void RDA_get_time(void)
 }
 
 /**************************************************************************************************
+* Scan FM band for stations
+*/
+void rda_search(void)
+{
+	uint8_t top_rssi[10];
+	uint16_t top_freq[10];
+	
+	memset(top_rssi, 0, sizeof(top_rssi));
+	memset(top_freq, 0, sizeof(top_freq));
+	
+	for (uint16_t i = 870; i < 1070; i++)
+	{
+		rda_tune(i);
+		_delay_ms(250);
+		rda_read_reg(RDA_REG_STATUSB);
+		uint8_t rssi = registers[RDA_REG_STATUSB] >> 9;
+		printf_P(PSTR("%u %04X %u\r\n"), i, registers[RDA_REG_STATUSB], rssi);
+		
+		uint8_t lowest_rssi = 0xFF;
+		int8_t lowest_idx = -1;
+		for (uint8_t j = 0; j < sizeof(top_rssi) / sizeof(top_rssi[0]); j++)
+		{
+			if (top_rssi[j] < lowest_rssi)
+			{
+				lowest_rssi = top_rssi[j];
+				lowest_idx = j;
+			}
+		}
+		
+		if (lowest_idx == -1) lowest_idx = 0;
+		if (top_rssi[lowest_idx] < rssi)
+		{
+			top_rssi[lowest_idx] = rssi;
+			top_freq[lowest_idx] = i;
+		}
+	}
+
+	// bubble sort
+	bool sorted;
+	do
+	{
+		sorted = true;
+		for (uint8_t i = 0; i < (sizeof(top_rssi) / sizeof(top_rssi[0])) - 1; i++)
+		{
+			if (top_rssi[i] < top_rssi[i+1])
+			{
+				sorted = false;
+				uint8_t rssi = top_rssi[i];
+				uint16_t freq = top_freq[i];
+				top_rssi[i] = top_rssi[i+1];
+				top_freq[i] = top_freq[i+1];
+				top_rssi[i+1] = rssi;
+				top_freq[i+1] = freq;
+			}
+		}
+	} while (!sorted);
+	
+	for (uint8_t i = 0; i < sizeof(top_rssi) / sizeof(top_rssi[0]); i++)
+		printf_P(PSTR("%u %u\r\n"), top_freq[i], top_rssi[i]);
+}
+
+/**************************************************************************************************
 * Test code
 */
 void RDA_test(void)
@@ -364,6 +426,9 @@ void RDA_test(void)
 
 	RDA_init();
 	rda_wake();
+
+	//rda_search();
+	//for (;;);
 
 	//rda_seek_up(false);
 	rda_tune(1004);
@@ -420,6 +485,9 @@ void RDA_test(void)
 					if (c2 == 32) c2 = '.';
 					name[cx] = c1;
 					name[cx+1] = c2;
+					
+					//printf_P(PSTR("ABCD %04X %04X %04X %04X %s\r\n"),
+					//	 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
 				}
 				break;
 /*
@@ -443,13 +511,52 @@ void RDA_test(void)
 					uint32_t d = (((uint32_t)(registers[RDA_REG_BLOCKB]) & 0b11) << 15) | (registers[RDA_REG_BLOCKC] >> 1);
 					uint8_t h = ((registers[RDA_REG_BLOCKC] & 1) << 4) | (registers[RDA_REG_BLOCKD] >> 12);
 					uint8_t m = (registers[RDA_REG_BLOCKD] >> 6) & 0x3F;
+					int8_t offset = registers[RDA_REG_BLOCKD] & 0x3F;
+					if (offset & 0x20) offset |= 0xE0;	// sign extend
 					
 					if (d < 57978) break;
 					if (h > 23) break;
 					if (m > 59) break;
+					if ((offset < -24) || (offset > 24)) break;
 					if (memcmp_P(name, PSTR("Classic."), 8) != 0) break;
+
+					printf_P(PSTR("MDJ=%lu, h=%u, m=%u, o=%u\r\n"), d, h, m, offset);
 					
-					printf_P(PSTR("MDJ=%lu, h=%u, m=%u\r\n"), d, h, m);
+					// adjust by offset
+					while (offset > 0)
+					{
+						m += 30;
+						if (m > 59)
+						{
+							m -= 60;
+							h++;
+							if (h > 23)
+							{
+								h = 0;
+								d++;
+							}
+						}
+						offset--;
+					}
+					
+					while (offset < 0)
+					{
+						m -= 30;
+						if (m > 59)	// underflow
+						{
+							m += 60;
+							h--;
+							if (h > 23)
+							{
+								h += 24;
+								d--;
+							}
+						}
+						offset++;
+					}
+					
+					//printf_P(PSTR("-> %d %02d:%02d\r\n"), d, h, m);
+					printf_P(PSTR("-> %ld %02d:%02d\r\n"), d, h, m);
 				}
 				break;
 			}
@@ -458,22 +565,13 @@ void RDA_test(void)
 			//	printf_P(PSTR("E    %04X %04X %04X %04X %s\r\n"),
 			//			 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
 			//else
-				printf_P(PSTR("ABCD %04X %04X %04X %04X %s\r\n"),
-						 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
+			//	printf_P(PSTR("ABCD %04X %04X %04X %04X %s\r\n"),
+			//			 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
 
 			//printf_P(PSTR("%04X %u\r\n"), registers[0x0B], registers[0x0B] >> 9);
 			//_delay_ms(100);
 		}
-	}
-
-	for (uint16_t i = 870; i < 1070; i++)
-	{
-		rda_tune(i);
-		_delay_ms(100);
-		rda_read_reg(RDA_REG_STATUSB);
-		printf_P(PSTR("%u %04X %u\r\n"), i, registers[RDA_REG_STATUSB], registers[RDA_REG_STATUSB] >> 9);
-	}
-	
+	}	
 	
 /*	
 	rda_read_all();
