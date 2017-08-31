@@ -1,7 +1,7 @@
 /*
  * rtc.h
  *
- */ 
+ */
 
 
 #ifndef RTC_H_
@@ -31,7 +31,7 @@ extern volatile uint8_t	RTC_show_clock;
 extern volatile uint8_t	RTC_colon_flash;
 
 
-extern bool RTC_set_rds_time(uint32_t mjd, uint8_t hour, uint8_t minute, int8_t offset);
+extern void RTC_set_rds_time(uint32_t mjd, uint8_t hour, uint8_t minute);
 extern void RTC_get_time(RTC_time_t *time);
 extern void RTC_init(void);
 

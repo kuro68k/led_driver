@@ -1,7 +1,7 @@
 /*
  * rda5807m.c
  *
- */ 
+ */
 
 #include <avr/io.h>
 #include <avr/pgmspace.h>
@@ -13,7 +13,12 @@
 #include "rtc.h"
 #include "rda5807m.h"
 
-const __flash uint16_t	preferred_frequencies_100khz[] = { 885, 825, 1060 };
+#define USE_PREFERRED
+const __flash uint16_t	preferred_frequencies_100khz[] = { 1060, 885, 825 };
+uint8_t top_rssi[10];
+uint16_t top_freq[10];
+
+const __flash char	good_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 !?";
 
 uint16_t	registers[16];
 
@@ -115,6 +120,13 @@ void rda_sleep(void)
 */
 void RDA_init(void)
 {
+	// load preferred stations
+	for (uint8_t i = 0; i < ARRAY_SIZE(preferred_frequencies_100khz); i++)
+	{
+		top_freq[i] = preferred_frequencies_100khz[i];
+		top_rssi[i] = 255;
+	}
+
 	for (int retries = 0; retries < 5; retries++)
 	{
 		TWI_init();
@@ -123,7 +135,7 @@ void RDA_init(void)
 		registers[RDA_REG_CTRLA] = RDA_SOFT_RESET_bm;
 		rda_write_reg(RDA_REG_CTRLA);
 		_delay_ms(1);
-	
+
 		// check chip ID
 		if (!rda_read_reg(RDA_REG_CHIPID) ||
 			((registers[RDA_REG_CHIPID] & 0xFF00) != 0x5800))
@@ -181,7 +193,7 @@ bool rda_tune(uint16_t freq)
 								RDA_TUNE_bm;
 	registers[RDA_REG_TUNING] = ((freq - 870) << 6) | RDA_TUNE_bm;
 	rda_write_reg(RDA_REG_TUNING);
-	
+
 	// wait for completion
 	uint8_t timeout = 0;
 	do
@@ -197,7 +209,7 @@ bool rda_tune(uint16_t freq)
 	//puts("");
 	//printf_P(PSTR("TUNING:  %04X\r\n"), registers[RDA_REG_TUNING]);
 	//printf_P(PSTR("STATUSA: %04X\r\n"), registers[RDA_REG_STATUSA]);
-	
+
 	if (registers[RDA_REG_STATUSA] & RDA_SF_bm)
 	{
 		puts_P(PSTR("failed"));
@@ -223,7 +235,7 @@ bool rda_seek_up(bool restart)
 	puts_P(PSTR("Seeking up"));
 	registers[RDA_REG_CTRLA] |= RDA_SEEKUP_bm | RDA_SEEK_bm;
 	rda_write_reg(RDA_REG_CTRLA);
-	
+
 	// wait for completion
 	uint8_t timeout = 0;
 	do
@@ -240,13 +252,13 @@ bool rda_seek_up(bool restart)
 			break;
 		rda_read_reg(RDA_REG_STATUSA);
 	} while (!(registers[RDA_REG_STATUSA] & (RDA_STC_bm | RDA_SF_bm)));		// seek complete or failed
-	
+
 	if (registers[RDA_REG_STATUSA] & RDA_SF_bm)
 	{
 		puts_P(PSTR("Seek failed"));
 		return false;
 	}
-	
+
 	rda_read_statusAB();
 	printf("STATUSA: %04X\r\n", registers[RDA_REG_STATUSA]);
 	printf("Found station at %u\r\n", (registers[RDA_REG_STATUSA] & 0x1F) + 760);
@@ -254,105 +266,170 @@ bool rda_seek_up(bool restart)
 }
 
 /**************************************************************************************************
+* Adjust UTC time to local via 30 minute offset
+*/
+void rda_adjust_by_offset(uint32_t *d, uint8_t *h, uint8_t *m, int8_t offset)
+{
+	while (offset > 0)
+	{
+		(*m) += 30;
+		if (*m > 59)
+		{
+			(*m) -= 60;
+			(*h)++;
+			if (*h > 23)
+			{
+				*h = 0;
+				(*d)++;
+			}
+		}
+		offset--;
+	}
+
+	while (offset < 0)
+	{
+		(*m) -= 30;
+		if (*m > 59)	// underflow
+		{
+			(*m) += 60;
+			(*h)--;
+			if (*h > 23)
+			{
+				(*h) += 24;
+				(*d)--;
+			}
+		}
+		offset++;
+	}
+}
+
+/**************************************************************************************************
 * Wait for valid RDS time data. Only returns on timeout.
 */
 void rda_wait_for_time(void)
 {
-	uint16_t timeout = 0;
-	uint16_t max_timeout = 10;	// initially 10 seconds to get RDS signal
-	
+	uint8_t confidence = 0;
+	uint16_t timeout = 30;		// initial time to get RDA signal
+	uint16_t last_blockb = 0;
+	char name[9] = "........\0";
+
 	do
 	{
 		if (RTC_second_tick_SIG)
 		{
 			RTC_second_tick_SIG = 0;
-			timeout++;
+			if (timeout > 0)
+				timeout--;
+			printf_P(PSTR("T:%u\r\n"), timeout);
 		}
-		
-		rda_read_reg(RDA_REG_STATUSA);
-		if (registers[RDA_REG_STATUSA] & RDA_RDSR_bm)
+
+		rda_read_all();
+		if ((registers[0x0A] & RDA_RDSR_bm) && (registers[RDA_REG_BLOCKB] != last_blockb))
 		{
-			if (max_timeout == 10)	// first time RDS found
+			last_blockb = registers[RDA_REG_BLOCKB];
+			if (((registers[0xA] & RDA_RDSS_bm) == 0) ||	// sync OK
+				((registers[0xB] & 0xF) != 0))				// bit errors
 			{
-				puts_P(PSTR("RDS found"));
-				timeout = 0;
-				max_timeout = 65;	// time broadcast once a minute
+				confidence = 0;
+				continue;
 			}
+			if (registers[RDA_REG_BLOCKB] & RDA_ABCD_E_bm)	// not interested
+				continue;
 
-			rda_read_all();
-			uint8_t type = 0x0A | (registers[RDA_REG_BLOCKB] >> 8) | (registers[RDA_REG_BLOCKB] >> 11);
-			if (type == 0x4A)	// time+date
+			uint8_t group_type = 0x0A |
+								((registers[RDA_REG_BLOCKB] & 0xF000) >> 8) |
+								((registers[RDA_REG_BLOCKB] &0x0800) >> 8);		// A/B bit
+			switch (group_type)
 			{
-				puts_P(PSTR("RDS time/date received"));
-				// modified Julian date offset from 1900
-				uint32_t mjd = (uint32_t)(registers[RDA_REG_BLOCKB] & 0b11) << 16;
-				mjd |= registers[RDA_REG_BLOCKC] >> 1;
-				uint8_t hour = (registers[RDA_REG_BLOCKC] & 1) << 4;
-				hour |= registers[RDA_REG_BLOCKD] >> 12;
-				uint8_t minute = (registers[RDA_REG_BLOCKD] >> 5) & 0x1F;
-				int8_t offset = (registers[RDA_REG_BLOCKD] & 0x1F);
-				if (offset & 0x10)	// need to sign extend
-					offset |= 0xF0;
-
-				printf_P(PSTR("%lu %02u:%02u:%02u %+d\r\n"));
-				
-				if (RTC_set_rds_time(mjd, hour, minute, offset))
+				case 0x0A:	// station name, PI code etc
+				case 0x0B:
 				{
-					max_timeout = 310;		// this station works, ignore temporary interference
-					RTC_colon_flash = 0;	// indicate time good
+					uint8_t cx = registers[RDA_REG_BLOCKB] & 0b11;
+					cx *= 2;
+					uint8_t c1, c2;
+					c1 = (registers[RDA_REG_BLOCKD] >> 8) & 0x7F;
+					c2 = registers[RDA_REG_BLOCKD] & 0x7F;
+					//if ((c1 < 32) || (c1 > 126) || (c2 < 32) || (c2 > 126))
+					//	continue;
+					if ((strchr_P(good_chars, c1) == NULL) ||
+						(strchr_P(good_chars, c2) == NULL))
+					{
+						confidence = 0;
+						continue;
+					}
+					if (c1 == 32) c1 = '.';
+					if (c2 == 32) c2 = '.';
+					name[cx] = c1;
+					name[cx+1] = c2;
+
+					if (timeout < 60)
+						timeout++;
+
+					//printf_P(PSTR("ABCD %04X %04X %04X %04X %s\r\n"),
+					//	 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
+					printf_P(PSTR("%s\r\n"), name);
 				}
-				else
-					puts_P(PSTR("Error setting time"));
+				break;
+/*
+				case 0x2A:	// radiotext
+				{
+					uint8_t c1, c2;
+					c1 = (registers[RDA_REG_BLOCKD] >> 8) & 0x7F;
+					c2 = registers[RDA_REG_BLOCKD] & 0x7F;
+					if ((strchr_P(good_chars, c1) == NULL) ||
+						(strchr_P(good_chars, c2) == NULL))
+					{
+						confidence = 0;
+						continue;
+					}
+				}
+*/
+				case 0x4A:	// time
+				{
+					uint32_t d = (((uint32_t)(registers[RDA_REG_BLOCKB]) & 0b11) << 15) | (registers[RDA_REG_BLOCKC] >> 1);
+					uint8_t h = ((registers[RDA_REG_BLOCKC] & 1) << 4) | (registers[RDA_REG_BLOCKD] >> 12);
+					uint8_t m = (registers[RDA_REG_BLOCKD] >> 6) & 0x3F;
+					int8_t offset = registers[RDA_REG_BLOCKD] & 0x3F;
+					if (offset & 0x20) offset |= 0xE0;	// sign extend
+
+					if ((d < 57388) ||		// 01/01/2016
+						(d > 88068) ||		// 31/12/2099
+						(h > 23) ||
+						(m > 59) ||
+						(offset < -24) ||	// UTC-12 hours
+						(offset > 28))		// UTC+14 hours
+					{
+						confidence = 0;
+						break;
+					}
+
+					if (timeout < 60)
+						timeout++;
+
+					printf_P(PSTR("MDJ=%lu, h=%u, m=%u, o=%u\r\n"), d, h, m, offset);
+					rda_adjust_by_offset(&d, &h, &m, offset);
+					printf_P(PSTR("-> %ld %02d:%02d\r\n"), d, h, m);
+
+					if (confidence > 10)
+						RTC_set_rds_time(d, h, m);
+				}
+				break;
 			}
+
+			//if (registers[RDA_REG_BLOCKB] & RDA_ABCD_E_bm)
+			//	printf_P(PSTR("E    %04X %04X %04X %04X %s\r\n"),
+			//			 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
+			//else
+			//	printf_P(PSTR("ABCD %04X %04X %04X %04X %s\r\n"),
+			//			 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
+
+			//printf_P(PSTR("%04X %u\r\n"), registers[0x0B], registers[0x0B] >> 9);
+			//_delay_ms(100);
 		}
-		
-		_delay_ms(10);		// limit polling rate
-		
-	} while (timeout < max_timeout);
-	
+	} while (timeout > 0);
+
 	puts_P(PSTR("RDS timeout"));
 	RTC_colon_flash = 0xFF;
-}
-
-/**************************************************************************************************
-* Continually get the current time from a radio station. Never returns.
-*/
-void RDA_get_time(void)
-{
-	rda_wake();
-
-	uint8_t	freq_idx = 0;
-	RTC_colon_flash = 0xFF;		// flash until RDS time synced
-	
-	for(;;)
-	{
-		// tune to next station to try
-		if (freq_idx < ARRAY_SIZE(preferred_frequencies_100khz))	// use a preferred frequency
-		{
-			if (!rda_tune(preferred_frequencies_100khz[freq_idx]))
-			{
-				freq_idx++;
-				continue;
-			}
-		}
-		else														// search for stations
-		{
-			bool res;
-			if (freq_idx == ARRAY_SIZE(preferred_frequencies_100khz))	// first time
-				res = rda_seek_up(true);
-			else
-				res = rda_seek_up(false);
-			if (!res)	// failed to find any stations
-			{
-				freq_idx = 0;	// restart
-				continue;
-			}
-			freq_idx++;
-		}
-		
-		// try to get time from RDS
-		rda_wait_for_time();
-	}
 }
 
 /**************************************************************************************************
@@ -360,12 +437,17 @@ void RDA_get_time(void)
 */
 void rda_search(void)
 {
-	uint8_t top_rssi[10];
-	uint16_t top_freq[10];
-	
 	memset(top_rssi, 0, sizeof(top_rssi));
 	memset(top_freq, 0, sizeof(top_freq));
-	
+
+	// load preferred frequencies
+	for (uint8_t i = 0; i < ARRAY_SIZE(preferred_frequencies_100khz); i++)
+	{
+		top_freq[i] = preferred_frequencies_100khz[i];
+		top_rssi[i] = 255;
+	}
+
+	// scan FM band
 	for (uint16_t i = 870; i < 1070; i++)
 	{
 		rda_tune(i);
@@ -373,7 +455,7 @@ void rda_search(void)
 		rda_read_reg(RDA_REG_STATUSB);
 		uint8_t rssi = registers[RDA_REG_STATUSB] >> 9;
 		printf_P(PSTR("%u %04X %u\r\n"), i, registers[RDA_REG_STATUSB], rssi);
-		
+
 		uint8_t lowest_rssi = 0xFF;
 		int8_t lowest_idx = -1;
 		for (uint8_t j = 0; j < sizeof(top_rssi) / sizeof(top_rssi[0]); j++)
@@ -384,7 +466,7 @@ void rda_search(void)
 				lowest_idx = j;
 			}
 		}
-		
+
 		if (lowest_idx == -1) lowest_idx = 0;
 		if (top_rssi[lowest_idx] < rssi)
 		{
@@ -393,7 +475,7 @@ void rda_search(void)
 		}
 	}
 
-	// bubble sort
+	// bubble sort with strongest RSSIs first
 	bool sorted;
 	do
 	{
@@ -412,9 +494,43 @@ void rda_search(void)
 			}
 		}
 	} while (!sorted);
-	
+
 	for (uint8_t i = 0; i < sizeof(top_rssi) / sizeof(top_rssi[0]); i++)
 		printf_P(PSTR("%u %u\r\n"), top_freq[i], top_rssi[i]);
+}
+
+/**************************************************************************************************
+* Continually get the current time from a radio station. Never returns.
+*/
+void RDA_get_time(void)
+{
+	TWI_init();
+	RDA_init();
+	rda_wake();
+
+	RTC_colon_flash = 0xFF;		// flash until RDS time synced
+
+#ifndef USE_PREFERRED
+	rda_search();
+#endif
+
+	for(;;)
+	{
+		// try all found frequencies
+		for (uint8_t i = 0; i < ARRAY_SIZE(top_freq); i++)
+		{
+			if (top_freq[i] == 0)
+				break;
+			if (!rda_tune(top_freq[i]))
+				continue;
+			printf_P(PSTR("Trying %u...\r\n"), top_freq[i]);
+
+			rda_wait_for_time();
+		}
+
+		// all frequencies failed, re-scan
+		rda_search();
+	}
 }
 
 /**************************************************************************************************
@@ -432,7 +548,7 @@ void RDA_test(void)
 
 	//rda_seek_up(false);
 	rda_tune(1004);
-	
+
 	_delay_ms(1000);
 	rda_read_reg(RDA_REG_STATUSB);
 	printf_P(PSTR("STATUSB: %04X %u\r\n"), registers[RDA_REG_STATUSB], registers[RDA_REG_STATUSB] >> 9);
@@ -485,7 +601,7 @@ void RDA_test(void)
 					if (c2 == 32) c2 = '.';
 					name[cx] = c1;
 					name[cx+1] = c2;
-					
+
 					//printf_P(PSTR("ABCD %04X %04X %04X %04X %s\r\n"),
 					//	 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
 				}
@@ -513,7 +629,7 @@ void RDA_test(void)
 					uint8_t m = (registers[RDA_REG_BLOCKD] >> 6) & 0x3F;
 					int8_t offset = registers[RDA_REG_BLOCKD] & 0x3F;
 					if (offset & 0x20) offset |= 0xE0;	// sign extend
-					
+
 					if (d < 57978) break;
 					if (h > 23) break;
 					if (m > 59) break;
@@ -521,7 +637,7 @@ void RDA_test(void)
 					if (memcmp_P(name, PSTR("Classic."), 8) != 0) break;
 
 					printf_P(PSTR("MDJ=%lu, h=%u, m=%u, o=%u\r\n"), d, h, m, offset);
-					
+
 					// adjust by offset
 					while (offset > 0)
 					{
@@ -538,7 +654,7 @@ void RDA_test(void)
 						}
 						offset--;
 					}
-					
+
 					while (offset < 0)
 					{
 						m -= 30;
@@ -554,7 +670,7 @@ void RDA_test(void)
 						}
 						offset++;
 					}
-					
+
 					//printf_P(PSTR("-> %d %02d:%02d\r\n"), d, h, m);
 					printf_P(PSTR("-> %ld %02d:%02d\r\n"), d, h, m);
 				}
@@ -571,11 +687,11 @@ void RDA_test(void)
 			//printf_P(PSTR("%04X %u\r\n"), registers[0x0B], registers[0x0B] >> 9);
 			//_delay_ms(100);
 		}
-	}	
-	
-/*	
+	}
+
+/*
 	rda_read_all();
-	
+
 	for(uint8_t i = 0; i < 16; i++)
 		printf_P(PSTR("%04X\r\n"), registers[i]);
 
@@ -583,6 +699,6 @@ void RDA_test(void)
 	printf_P(PSTR("ID: %04X\r\n"), registers[0]);
 	if (res) puts_P(PSTR("OK"));
 	else puts_P(PSTR("FAIL"));
-*/	
+*/
 	for(;;);
 }

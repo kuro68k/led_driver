@@ -1,7 +1,7 @@
 /*
  * rtc.c
  *
- */ 
+ */
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -31,7 +31,7 @@ bool rtc_check_rds_time(uint32_t mjd, uint8_t hour, uint8_t minute, int8_t offse
 {
 	if ((minute > 59) || (hour > 23) || (offset > 14) || (offset < -14))
 		return false;
-	
+
 	if ((mjd < 57388) ||	// 01/01/2016
 		(mjd > 88068))		// 31/12/2099
 		return false;
@@ -60,50 +60,20 @@ void rtc_mjd_to_dmy(uint32_t mjd, uint8_t *day, uint8_t *month, uint8_t *year)
 /**************************************************************************************************
 * Convert and set time from RDS receiver
 */
-bool RTC_set_rds_time(uint32_t mjd, uint8_t hour, uint8_t minute, int8_t offset)
+void RTC_set_rds_time(uint32_t mjd, uint8_t hour, uint8_t minute)
 {
-	if (!rtc_check_rds_time(mjd, hour, minute, offset))
-		return false;
-
-	// adjust for timezone
-	int8_t h = hour;
-	h += offset;
-	if (h < 0)
-	{
-		h += 24;
-		mjd--;
-	}
-	if (hour > 23)
-	{
-		h -= 24;
-		mjd++;
-	}
-	hour = h;
-	
 	// set new time
 	RTC_time_t	new_time;
-
-	if (mjd != rtc_last_mjd)	// try to avoid an expensive conversion
-	{
-		rtc_mjd_to_dmy(mjd, &new_time.day, &new_time.month, &new_time.year);
-		rtc_last_mjd = mjd;
-	}
-	else
-	{
-		new_time.day = rtc_last_mjd_conversion.day;
-		new_time.month = rtc_last_mjd_conversion.month;
-		rtc_last_mjd_conversion.year = rtc_last_mjd_conversion.year;
-	}
-	
+	rtc_mjd_to_dmy(mjd, &new_time.day, &new_time.month, &new_time.year);
 	new_time.hour = hour;
 	new_time.minute = minute;
 	new_time.second = 0;
-	
+
 	// set RTC
 	cli();
 	memcpy((void *)&rtc_time_AT, &new_time, sizeof(rtc_time_AT));
 	sei();
-	
+
 	// update display
 	if (RTC_show_clock)
 	{
@@ -111,8 +81,6 @@ bool RTC_set_rds_time(uint32_t mjd, uint8_t hour, uint8_t minute, int8_t offset)
 		CLK_display_time(&new_time);
 		RTC_show_clock = 0xFF;
 	}
-	
-	return true;
 }
 
 /**************************************************************************************************
@@ -139,13 +107,13 @@ void RTC_init(void)
 	rtc_time_AT.hour = 0;
 	rtc_time_AT.minute = 0;
 	rtc_time_AT.second = 0;
-	
+
 	// start RTC
 	//CLK.RTCCTRL = CLK_RTCSRC_EXTCLK_gc | CLK_RTCEN_bm;	// 32.768kHz from TCXO
 	OSC.CTRL |= OSC_RC32KEN_bm;
 	while(!(OSC.STATUS & OSC_RC32KRDY_bm));
 	CLK.RTCCTRL = CLK_RTCSRC_RCOSC32_gc | CLK_RTCEN_bm;
-	
+
 	while ((!RTC.STATUS & RTC_SYNCBUSY_bm));
 	//RTC.INTCTRL = RTC_OVFINTLVL_LO_gc | RTC_COMPINTLVL_LO_gc;
 	RTC.CALIB = 0;
@@ -173,7 +141,7 @@ ISR(RTC_OVF_vect)
 			{
 				rtc_time_AT.hour = 0;
 				rtc_time_AT.day++;
-				
+
 				uint8_t d = days_in_month[rtc_time_AT.month - 1];
 				if ((rtc_time_AT.month == 2) &&
 					(RTC_is_leap_year(rtc_time_AT.year)))
@@ -191,7 +159,7 @@ ISR(RTC_OVF_vect)
 			}
 		}
 	}
-	
+
 	if (RTC_show_clock)
 		CLK_display_time((RTC_time_t *)&rtc_time_AT);
 }
