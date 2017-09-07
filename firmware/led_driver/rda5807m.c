@@ -349,8 +349,6 @@ void rda_wait_for_time(void)
 					uint8_t c1, c2;
 					c1 = (registers[RDA_REG_BLOCKD] >> 8) & 0x7F;
 					c2 = registers[RDA_REG_BLOCKD] & 0x7F;
-					//if ((c1 < 32) || (c1 > 126) || (c2 < 32) || (c2 > 126))
-					//	continue;
 					if ((strchr_P(good_chars, c1) == NULL) ||
 						(strchr_P(good_chars, c2) == NULL))
 					{
@@ -414,18 +412,8 @@ void rda_wait_for_time(void)
 						RTC_set_rds_time(d, h, m);
 				}
 				break;
-			}
-
-			//if (registers[RDA_REG_BLOCKB] & RDA_ABCD_E_bm)
-			//	printf_P(PSTR("E    %04X %04X %04X %04X %s\r\n"),
-			//			 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
-			//else
-			//	printf_P(PSTR("ABCD %04X %04X %04X %04X %s\r\n"),
-			//			 registers[0x0C], registers[0x0D], registers[0x0E], registers[0x0F], name);
-
-			//printf_P(PSTR("%04X %u\r\n"), registers[0x0B], registers[0x0B] >> 9);
-			//_delay_ms(100);
-		}
+			} // switch
+		} // if
 	} while (timeout > 0);
 
 	puts_P(PSTR("RDS timeout"));
